@@ -1,3 +1,4 @@
+
 /* global userAddress, userLastSeen, userClients, setWebsocketConnections, broadcastToUser, createServiceLogger, sendEmail, logError, startEscrowTimeoutChecker, refreshWsMetrics, startNotificationProcessor, startAdminReportScheduler, startWeeklyDigestScheduler, startPurgeDeletedRecords, startRecurringEscrowTicker */
 /* eslint-disable */
 /**
@@ -31,6 +32,39 @@ const {
 const migrate = require("./db/migrate");
 const IndexerService = require("./services/indexerService");
 const { PriceAlertService } = require("./services/priceAlertService");
+const pool              = require("./db/pool");
+const anchorRoutes        = require("./routes/anchors");
+const scopeRoutes        = require("./routes/scope");
+const analyticsRoutes    = require("./routes/analytics");
+const searchRoutes       = require("./routes/search");
+const adminRoutes        = require("./routes/admin");
+const admin2faRoutes     = require("./routes/admin2fa");
+const assessmentRoutes   = require("./routes/assessments");
+const auditRoutes        = require("./routes/audit");
+const categoryRoutes     = require("./routes/categories");
+const certificateRoutes  = require("./routes/certificates");
+const developerRoutes    = require("./routes/developer");
+const disputeRoutes      = require("./routes/disputes");
+const faucetRoutes       = require("./routes/faucet");
+const insightRoutes      = require("./routes/insights");
+const jobTemplateRoutes  = require("./routes/jobTemplates");
+const messageRoutes      = require("./routes/messageRoutes");
+const notificationRoutes = require("./routes/notifications");
+const onboardingRoutes   = require("./routes/onboarding");
+const pingRoutes         = require("./routes/ping");
+const publicRoutes       = require("./routes/public");
+const publicJobBoardRoutes = require("./routes/publicJobBoard");
+const rateLimitRoutes    = require("./routes/rateLimit");
+const savedSearchRoutes  = require("./routes/savedSearches");
+const skillRoutes        = require("./routes/skills");
+const sponsorshipRoutes  = require("./routes/sponsorship");
+const timeEntryRoutes    = require("./routes/timeEntries");
+const tokenRoutes        = require("./routes/tokens");
+const webauthnRoutes     = require("./routes/webauthn");
+const webhookRoutes      = require("./routes/webhooks");
+ 
+const { setWebsocketConnections } = require("./metrics");
+const { startEscrowTimeoutChecker } = require("./services/escrowService");
 const { scheduleStatsRefresh } = require("./services/statsService");
 const { startPushSubscriptionPurge } = require("./services/pushSubscriptionService");
 
@@ -76,10 +110,102 @@ const priceAlertService = new PriceAlertService({
     });
   },
 });
-
-const app = createApp({
-  indexerService,
-  broadcastRealtime,
+ 
+app.locals.indexerService = indexerService;
+app.locals.broadcastRealtime = broadcastRealtime;
+ 
+// Middleware
+app.use(helmet());
+app.use(morgan("dev"));
+app.use(express.json({ limit: "20kb" }));
+ 
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "http://localhost:3000").split(",").map(o => o.trim());
+app.use(cors({
+  origin: (origin, cb) => (!origin || allowedOrigins.includes(origin)) ? cb(null, true) : cb(new Error("CORS blocked")),
+  methods: ["GET", "POST", "PATCH", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
+}));
+ 
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 150, standardHeaders: true, legacyHeaders: true }));
+ 
+// ─── Routes ───────────────────────────────────────────────────────────────────
+app.use("/health",            healthRoutes);
+app.use("/api/auth",          authRoutes);
+app.use("/api/jobs",          jobRoutes);
+app.use("/api/applications",  applicationRoutes);
+app.use("/api/profiles",      profileRoutes);
+app.use("/api/escrow",        escrowRoutes);
+app.use("/api/ratings",       ratingRoutes);
+app.use("/api/progress",      progressRoutes);
+app.use("/api/events",        eventRoutes);
+app.use("/api/stats",         statsRoutes);
+app.use("/api/contributors",  contributorRoutes);
+app.use("/api/verification",  verificationRoutes);
+app.use("/api/nft",           nftRoutes);
+app.use("/api/ai-scorer",     aiScorerRoutes);
+app.use("/api/anchors",       anchorRoutes);
+ 
+app.get("/api/indexer/health", (req, res) => {
+  res.json({
+    status: "ok",
+    indexer: indexerService.getHealth(),
+  });
+});
+app.use("/api/contributors",    contributorRoutes);
+app.use("/api/gas-estimate",    gasEstimatorRoutes);
+app.use("/api/transactions",   transactionRoutes);
+app.use("/api/dao",            daoRoutes);
+app.use("/api/proposal-templates", proposalTemplateRoutes);
+app.use("/api/price-alerts",      priceAlertRoutes);
+app.use("/api/ai",                aiScorerRoutes);
+app.use("/api/scope",             scopeRoutes);
+app.use("/api/turrets",           turretRoutes);
+app.use("/api/referrals",         referralRoutes);
+app.use("/api/reputation",        reputationRoutes);
+app.use("/api/auto-convert",      autoConvertRoutes);
+app.use("/api/talent-pools",      talentPoolRoutes);
+app.use("/api/invitations",       rateLimit({ windowMs: 60_000, max: 20 }), invitationRoutes);
+app.use("/api/analytics",         analyticsRoutes);
+app.use("/api/search",            searchRoutes);
+app.use("/ping",                  pingRoutes);
+app.use("/api/ping",              pingRoutes);
+app.use("/api/admin/2fa",         admin2faRoutes);
+app.use("/api/admin",             adminRoutes);
+app.use("/api/assessments",       assessmentRoutes);
+app.use("/api/audit",             auditRoutes);
+app.use("/api/categories",        categoryRoutes);
+app.use("/api/certificates",      certificateRoutes);
+app.use("/api/developer",         developerRoutes);
+app.use("/api/disputes",          disputeRoutes);
+app.use("/api/faucet",            faucetRoutes);
+app.use("/api/insights",          insightRoutes);
+app.use("/api/job-templates",     jobTemplateRoutes);
+app.use("/api/messages",          messageRoutes);
+app.use("/api/notifications",     notificationRoutes);
+app.use("/api/onboarding",        onboardingRoutes);
+app.use("/api/public",            publicRoutes);
+app.use("/api/v1/public",         publicJobBoardRoutes);
+app.use("/api/rate-limit",        rateLimitRoutes);
+app.use("/api/saved-searches",    savedSearchRoutes);
+app.use("/api/skills",            skillRoutes);
+app.use("/api/sponsorship",       sponsorshipRoutes);
+app.use("/api/time-entries",      timeEntryRoutes);
+app.use("/api/tokens",            tokenRoutes);
+app.use("/api/webauthn",          webauthnRoutes);
+app.use("/api/webhooks",          webhookRoutes);
+ 
+// 404 handler — must come after all routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Not found", code: "NOT_FOUND" });
+});
+ 
+app.use((err, req, res, _next) => {
+  console.error("[Error]", err.message);
+ 
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error",
+  });
 });
 
 const server = http.createServer(app);
